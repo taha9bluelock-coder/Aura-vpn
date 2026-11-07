@@ -1,0 +1,59 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip source
+        run: |
+          if [ ! -f source.zip ]; then
+            echo "source.zip was not found in the repository root. Upload it first."
+            exit 1
+          fi
+          unzip -q source.zip -d src
+          ls src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK pieces
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "ndk;28.1.13356709"
+          sudo apt-get install -y swig
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: src/android-app-master
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew assembleProductionVanillaOpenSourceDebug --no-daemon --stacktrace 2>&1 | tee ../build.log
+
+      - name: Show errors in the run summary
+        if: failure()
+        run: |
+          {
+            echo "### Build errors (copy and send to Claude)"
+            echo '```'
+            grep -E "^e: |error:|What went wrong|FAILED" -A3 src/build.log | head -80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-vpn-debug-apk
+          path: src/android-app-master/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
